@@ -148,8 +148,8 @@ class Jinja2SQL:
         self._env.filters["identifier"] = self.identifier
 
         # Set the context variable
-        self._render_context_var: ContextVar[RenderContext | None] = ContextVar(
-            "render_context", default=None
+        self._render_context_var: ContextVar[RenderContext] = ContextVar(
+            "render_context"
         )
 
     @property
@@ -260,13 +260,6 @@ class Jinja2SQL:
             template = self.env.from_string(source)
             return await self._render_async(template, context)
 
-    @property
-    def _render_context(self) -> RenderContext:
-        """Get the template context."""
-        if (render_context := self._render_context_var.get()) is None:
-            raise RuntimeError("Outside of a render context.")
-        return render_context
-
     @contextlib.contextmanager
     def _begin_render_context(
         self,
@@ -291,21 +284,24 @@ class Jinja2SQL:
     ) -> tuple[str, Params]:
         """Render a template."""
         query = template.render(context or {})
-        return query, self._render_context.params
+        render_context = self._render_context_var.get()
+        return query, render_context.params
 
     async def _render_async(
         self, template: jinja2.Template, context: Context | None
     ) -> tuple[str, Params]:
         """Render a template asynchronously."""
         query = await template.render_async(context or {})
-        return query, self._render_context.params
+        render_context = self._render_context_var.get()
+        return query, render_context.params
 
     def _bind_param(self, key: str, value: Any, *, in_clause: bool = False) -> str:
         """Bind a parameter."""
-        param_key, param_index = self._render_context.bind_param(
+        render_context = self._render_context_var.get()
+        param_key, param_index = render_context.bind_param(
             key, value, in_clause=in_clause
         )
-        if callable(param_style := self._render_context.param_style):
+        if callable(param_style := render_context.param_style):
             return param_style(param_key, param_index)
         elif param_style == "named":
             return f":{param_key}"
@@ -345,14 +341,16 @@ class Jinja2SQL:
             raise ValueError("identifier filter expects a string or an Iterable")
 
         def _quote_and_escape(item: str) -> str:
+            render_context = self._render_context_var.get()
+            identifier_quote_char = render_context.identifier_quote_char
             return "".join(
                 [
-                    self._render_context.identifier_quote_char,
+                    identifier_quote_char,
                     item.replace(
-                        self._render_context.identifier_quote_char,
-                        self._render_context.identifier_quote_char * 2,
+                        identifier_quote_char,
+                        identifier_quote_char * 2,
                     ),
-                    self._render_context.identifier_quote_char,
+                    identifier_quote_char,
                 ]
             )
 
